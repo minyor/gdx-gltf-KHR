@@ -13,11 +13,17 @@ public class NodePlus extends Node
 	 */
 	public WeightVector weights;
 	
-	/** 
-	 * optionnal morph target names (eg. exported from Blender with custom properties enabled). 
+	/**
+	 * optionnal morph target names (eg. exported from Blender with custom properties enabled).
 	 * shared with others nodes with same mesh.
 	 */
 	public Array<String> morphTargetNames;
+	
+	/**
+	 * true if this node was created by meshopt primitive splitting (gltfpack compressed mesh).
+	 * Used by GLTFLoaderBase to promote split children to top-level nodes.
+	 */
+	public boolean meshoptSplit;
 	
 	@Override
 	public Node copy() {

@@ -1,9 +1,10 @@
 include ":gltf"
 
-include ":demo"
-include ":demo:core"
-include ":demo:desktop"
+// Exclude demo and ibl-composer from composite build (not needed, causes Gradle 9 compat issues)
+// include ":demo"
+// include ":demo:core"
+// include ":demo:desktop"
 // include ":demo:android"
-include ":demo:html"
+// include ":demo:html"
 
-include ":ibl-composer"
+// include ":ibl-composer"

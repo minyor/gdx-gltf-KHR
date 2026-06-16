@@ -16,6 +16,7 @@ public class AccessorBuffer {
     private final GLTFBufferView bufferView;
     private ByteBuffer data;
     private int byteOffset;
+    private int byteStride; // Override for meshopt decompressed data
 
     AccessorBuffer(GLTFAccessor accessor, GLTFBufferView bufferView, ByteBuffer data) {
         this.accessor = accessor;
@@ -29,6 +30,9 @@ public class AccessorBuffer {
     }
 
     public int getByteStride() {
+        if (byteStride != 0) {
+            return byteStride;
+        }
         if (bufferView != null && bufferView.byteStride != null) {
             return bufferView.byteStride;
         } else {
@@ -78,15 +82,37 @@ public class AccessorBuffer {
     }
 
     public static AccessorBuffer fromBufferView(
-            GLTFAccessor glAccessor, GLTFBufferView glBufferView, DataFileResolver resolver
+    		GLTFAccessor glAccessor, GLTFBufferView glBufferView, DataFileResolver resolver
     ) {
-        AccessorBuffer buffer = new AccessorBuffer(
-                glAccessor, glBufferView, resolver.getBuffer(glBufferView.buffer)
-        );
-        buffer.data.position(buffer.getByteOffset());
-        return buffer;
+    	AccessorBuffer buffer = new AccessorBuffer(
+    			glAccessor, glBufferView, resolver.getBuffer(glBufferView.buffer)
+    	);
+    	buffer.data.position(buffer.getByteOffset());
+    	return buffer;
     }
-
+   
+    /**
+     * Create an AccessorBuffer from a pre-decompressed ByteBuffer (used for meshopt).
+     * The accessor's byteOffset is preserved to handle sub-mesh accessors within shared buffer views.
+     */
+    public static AccessorBuffer fromByteBuffer(GLTFAccessor glAccessor, ByteBuffer data, int byteStride) {
+    	AccessorBuffer buffer = new AccessorBuffer(glAccessor, null, data);
+    	buffer.byteOffset = glAccessor.byteOffset;
+    	buffer.byteStride = byteStride;
+    	return buffer;
+    }
+    
+    /**
+     * Create an AccessorBuffer from a pre-decompressed ByteBuffer with a specific offset.
+     * Used for meshopt where the offset must be converted from original stride to meshopt stride.
+     */
+    public static AccessorBuffer fromByteBufferAt(GLTFAccessor glAccessor, ByteBuffer data, int byteStride, int byteOffset) {
+    	AccessorBuffer buffer = new AccessorBuffer(glAccessor, null, data);
+    	buffer.byteOffset = byteOffset;
+    	buffer.byteStride = byteStride;
+    	return buffer;
+    }
+   
     public static AccessorBuffer fromZeros(GLTFAccessor glAccessor) {
         // spec for undefined bufferView:
         // "When undefined, the accessor **MUST** be initialized with zeros"

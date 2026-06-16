@@ -6,11 +6,15 @@ import java.nio.FloatBuffer;
 import java.nio.IntBuffer;
 import java.nio.ShortBuffer;
 
+import com.badlogic.gdx.utils.ObjectMap;
+
 import net.mgsx.gltf.data.GLTF;
 import net.mgsx.gltf.data.data.GLTFAccessor;
 import net.mgsx.gltf.data.data.GLTFBufferView;
+import net.mgsx.gltf.data.data.MeshoptBufferViewExtension;
 import net.mgsx.gltf.loaders.exceptions.GLTFUnsupportedException;
 import net.mgsx.gltf.loaders.shared.GLTFTypes;
+import net.mgsx.gltf.meshopt.MeshoptDecoder;
 
 public class DataResolver {
 	
@@ -31,18 +35,24 @@ public class DataResolver {
 		GLTFAccessor accessor = glModel.accessors.get(accessorID);
 		AccessorBuffer accessorBuffer = getAccessorBuffer(accessor);
 		ByteBuffer bytes = accessorBuffer.prepareForReading();
-		float [] data = new float[GLTFTypes.accessorSize(accessor)/4];
-
+		
 		int nbFloatsPerVertex = GLTFTypes.accessorTypeSize(accessor);
+		int totalElements = accessor.count * nbFloatsPerVertex;
+		float[] data = new float[totalElements];
+
 		int nbBytesToSkip = accessorBuffer.getByteStride() - nbFloatsPerVertex * 4;
 		if(nbBytesToSkip == 0){
-			bytes.asFloatBuffer().get(data);
+			int currentPos = bytes.position();
+			ByteBuffer safeSlice = bytes.duplicate();
+			safeSlice.position(currentPos);
+			safeSlice.limit(currentPos + (totalElements * 4));
+			safeSlice.asFloatBuffer().get(data);
+			bytes.position(currentPos + (totalElements * 4));
 		}else{
 			for(int i=0 ; i<accessor.count ; i++){
 				for(int j=0 ; j<nbFloatsPerVertex ; j++){
 					data[i*nbFloatsPerVertex+j] = bytes.getFloat();
 				}
-				// skip remaining bytes
 				bytes.position(bytes.position() + nbBytesToSkip);
 			}
 		}
@@ -53,20 +63,27 @@ public class DataResolver {
 		GLTFAccessor accessor = glModel.accessors.get(accessorID);
 		AccessorBuffer accessorBuffer = getAccessorBuffer(accessor);
 		ByteBuffer bytes = accessorBuffer.prepareForReading();
-		int [] data = new int[GLTFTypes.accessorSize(accessor)];
 		
 		int nbBytesPerVertex = GLTFTypes.accessorTypeSize(accessor);
+		// CRITICAL: Allocate STRICTLY for the accessor's local count
+		int[] data = new int[accessor.count * nbBytesPerVertex];
+		
 		int nbBytesToSkip = accessorBuffer.getByteStride() - nbBytesPerVertex;
 		if(nbBytesToSkip == 0){
+			int currentPos = bytes.position();
+			ByteBuffer safeSlice = bytes.duplicate();
+			safeSlice.position(currentPos);
+			safeSlice.limit(currentPos + data.length);
+			
 			for(int i=0 ; i<data.length ; i++){
-				data[i] = bytes.get() & 0xFF;
+				data[i] = safeSlice.get() & 0xFF;
 			}
+			bytes.position(currentPos + data.length);
 		}else{
 			for(int i=0 ; i<accessor.count ; i++){
 				for(int j=0 ; j<nbBytesPerVertex ; j++){
 					data[i*nbBytesPerVertex+j] = bytes.get() & 0xFF;
 				}
-				// skip remaining bytes
 				bytes.position(bytes.position() + nbBytesToSkip);
 			}
 		}
@@ -76,22 +93,29 @@ public class DataResolver {
 	public int[] readBufferUShort(int accessorID) {
 		GLTFAccessor accessor = glModel.accessors.get(accessorID);
 		AccessorBuffer accessorBuffer = getAccessorBuffer(accessor);
-		ByteBuffer bytes = accessorBuffer.prepareForReading();
-		int [] data = new int[GLTFTypes.accessorSize(accessor)/2];
+		ByteBuffer bytes = accessorBuffer.prepareForReading(); // Sets position to byteOffset
 		
 		int nbShortsPerVertex = GLTFTypes.accessorTypeSize(accessor);
+		// CRITICAL: Allocate STRICTLY for the accessor's local count, matching uncompressed expectations
+		int[] data = new int[accessor.count * nbShortsPerVertex];
+		
 		int nbBytesToSkip = accessorBuffer.getByteStride() - nbShortsPerVertex * 2;
 		if(nbBytesToSkip == 0){
-			ShortBuffer shorts = bytes.asShortBuffer();
+			int currentPos = bytes.position();
+			ByteBuffer safeSlice = bytes.duplicate();
+			safeSlice.position(currentPos);
+			safeSlice.limit(currentPos + (data.length * 2)); // Dynamic boundary restriction
+			
+			ShortBuffer shorts = safeSlice.asShortBuffer();
 			for(int i=0 ; i<data.length ; i++){
 				data[i] = shorts.get() & 0xFFFF;
 			}
+			bytes.position(currentPos + (data.length * 2));
 		}else{
 			for(int i=0 ; i<accessor.count ; i++){
 				for(int j=0 ; j<nbShortsPerVertex ; j++){
 					data[i*nbShortsPerVertex+j] = bytes.getShort() & 0xFFFF;
 				}
-				// skip remaining bytes
 				bytes.position(bytes.position() + nbBytesToSkip);
 			}
 		}
@@ -142,11 +166,26 @@ public class DataResolver {
 	}
 
 	public AccessorBuffer getAccessorBuffer(GLTFAccessor glAccessor) {
+		com.badlogic.gdx.Gdx.app.log("GLTF", "DEBUG getAccessorBuffer: accessor.count=" + glAccessor.count + " accessor.bufferView=" + glAccessor.bufferView + " accessor.byteOffset=" + glAccessor.byteOffset);
 		AccessorBuffer buffer;
 		if (glAccessor.bufferView != null) {
 			GLTFBufferView bufferView = glModel.bufferViews.get(glAccessor.bufferView);
-			buffer = AccessorBuffer.fromBufferView(glAccessor, bufferView, dataFileResolver);
+			com.badlogic.gdx.Gdx.app.log("GLTF", "DEBUG getAccessorBuffer: bufferView=" + (bufferView != null ? "found" : "NULL") + " bufferView.buffer=" + (bufferView != null ? bufferView.buffer : "N/A"));
+			
+			// Check for meshopt compression extension
+			MeshoptBufferViewExtension meshopt = getMeshoptExtension(bufferView);
+			com.badlogic.gdx.Gdx.app.log("GLTF", "DEBUG getAccessorBuffer: meshopt extension=" + (meshopt != null ? "FOUND" : "null"));
+			if (meshopt != null) {
+				com.badlogic.gdx.Gdx.app.log("GLTF", "DEBUG getAccessorBuffer: meshopt.buffer=" + meshopt.buffer + " mode=" + meshopt.mode + " filter=" + meshopt.filter + " count=" + meshopt.count + " byteStride=" + meshopt.byteStride);
+				com.badlogic.gdx.Gdx.app.log("GLTF", "DEBUG getAccessorBuffer: MeshoptDecoder.isAvailable()=" + MeshoptDecoder.isAvailable());
+				// Decompress using meshopt decoder
+				buffer = decompressMeshoptBuffer(glAccessor, bufferView, meshopt);
+			} else {
+				com.badlogic.gdx.Gdx.app.log("GLTF", "DEBUG getAccessorBuffer: using regular AccessorBuffer.fromBufferView");
+				buffer = AccessorBuffer.fromBufferView(glAccessor, bufferView, dataFileResolver);
+			}
 		} else {
+			com.badlogic.gdx.Gdx.app.log("GLTF", "DEBUG getAccessorBuffer: bufferView is null, using fromZeros");
 			buffer = AccessorBuffer.fromZeros(glAccessor);
 		}
 		if (glAccessor.sparse != null) {
@@ -155,6 +194,167 @@ public class DataResolver {
 		}
 		buffer.prepareForReading();
 		return buffer;
+	}
+	
+	/**
+	 * Cache for decompressed buffer views to avoid redundant decompression.
+	 */
+	private ObjectMap<GLTFBufferView, ByteBuffer> meshoptDecompressionCache = new ObjectMap<GLTFBufferView, ByteBuffer>();
+	
+	/**
+	 * Get meshopt extension from buffer view if present.
+	 */
+	private MeshoptBufferViewExtension getMeshoptExtension(GLTFBufferView bufferView) {
+		if (bufferView.extensions != null) {
+			return bufferView.extensions.get(MeshoptBufferViewExtension.class, MeshoptBufferViewExtension.EXTENSION_NAME);
+		}
+		return null;
+	}
+	
+	/**
+	 * Decompress a meshopt-compressed buffer view.
+	 * Falls back to uncompressed data from the original buffer view if native decoder is unavailable.
+	 */
+	private AccessorBuffer decompressMeshoptBuffer(GLTFAccessor glAccessor, GLTFBufferView bufferView, MeshoptBufferViewExtension meshopt) {
+		com.badlogic.gdx.Gdx.app.log("GLTF", "DEBUG decompressMeshoptBuffer: START bufferView=" + (bufferView != null ? "non-null" : "NULL"));
+		
+		if (bufferView == null) {
+			com.badlogic.gdx.Gdx.app.error("GLTF", "ERROR decompressMeshoptBuffer: bufferView is null!");
+			return AccessorBuffer.fromZeros(glAccessor);
+		}
+		
+		if (!MeshoptDecoder.isAvailable()) {
+			com.badlogic.gdx.Gdx.app.log("GLTF", "DEBUG decompressMeshoptBuffer: MeshoptDecoder NOT available, falling back to uncompressed");
+			return AccessorBuffer.fromBufferView(glAccessor, bufferView, dataFileResolver);
+		}
+		
+		// 1. Check cache using the bufferView as the unique key
+		if (meshoptDecompressionCache.containsKey(bufferView)) {
+			com.badlogic.gdx.Gdx.app.log("GLTF", "DEBUG decompressMeshoptBuffer: CACHE HIT");
+			ByteBuffer cachedBuffer = meshoptDecompressionCache.get(bufferView);
+			// FIX: glAccessor.byteOffset is already mapped to the decompressed stream layout
+			return AccessorBuffer.fromByteBufferAt(glAccessor, cachedBuffer.duplicate(), meshopt.byteStride, glAccessor.byteOffset);
+		}
+		
+		com.badlogic.gdx.Gdx.app.log("GLTF", "DEBUG decompressMeshoptBuffer: CACHE MISS");
+
+		// 2. Fetch the raw compressed storage container buffer
+		// CRITICAL FIX: Use meshopt.buffer index, NOT bufferView.buffer index!
+		int rawBufferIndex = meshopt.buffer;
+		ByteBuffer globalBuffer = dataFileResolver.getBuffer(rawBufferIndex);
+		
+		// 3. CRITICAL FIX: Read boundary values from the meshopt extension instance, NOT the base bufferView!
+		int compressedOffset = meshopt.byteOffset;
+		int compressedLength = meshopt.byteLength;
+		int stride = meshopt.byteStride;
+		int count = meshopt.count;
+		int decompressedSize = count * stride;
+
+		com.badlogic.gdx.Gdx.app.log("GLTF", "DEBUG decompressMeshoptBuffer: slicing compressed bounds offset="
+			+ compressedOffset + " length=" + compressedLength + " global capacity=" + globalBuffer.capacity());
+
+		// 4. Safely isolate the compressed byte array block
+		globalBuffer.position(compressedOffset);
+		ByteBuffer compressedSlice = globalBuffer.slice();
+		compressedSlice.limit(compressedLength);
+		compressedSlice.order(ByteOrder.nativeOrder());
+
+		// 5. Copy compressed data to a direct buffer (JNI requires direct buffers)
+		ByteBuffer directCompressed = ByteBuffer.allocateDirect(compressedLength);
+		directCompressed.order(ByteOrder.LITTLE_ENDIAN);
+		directCompressed.put(compressedSlice);
+		directCompressed.flip();
+
+		// 6. Allocate a clean, direct target output buffer for the native decoder
+		ByteBuffer decompressedBuffer = ByteBuffer.allocateDirect(decompressedSize);
+		decompressedBuffer.order(ByteOrder.LITTLE_ENDIAN);
+
+		// 7. Invoke native meshopt JNI decode based on mode
+		int result;
+		switch (meshopt.getMode()) {
+			case ATTRIBUTES:
+				result = MeshoptDecoder.decodeVertexBuffer(decompressedBuffer, count, stride, directCompressed);
+				break;
+			case TRIANGLES:
+				result = MeshoptDecoder.decodeIndexBuffer(decompressedBuffer, count, stride, directCompressed);
+				break;
+			case INDICES:
+				result = MeshoptDecoder.decodeIndexSequence(decompressedBuffer, count, stride, directCompressed);
+				break;
+			default:
+				result = MeshoptDecoder.decodeVertexBuffer(decompressedBuffer, count, stride, directCompressed);
+				break;
+		}
+		
+		if (result != 0) {
+			com.badlogic.gdx.Gdx.app.error("GLTF", "ERROR: Meshopt native vertex decoding failed with code: " + result);
+			return AccessorBuffer.fromZeros(glAccessor);
+		}
+
+		// Apply meshopt filter to restore octahedral/quaternion/exponential encodings
+		if (meshopt.filter != null && !meshopt.filter.equals("NONE")) {
+			decompressedBuffer.clear();
+			switch (meshopt.getFilter()) {
+				case OCTAHEDRAL:
+					com.badlogic.gdx.Gdx.app.log("GLTF", "Applying native Meshopt OCTAHEDRAL decode filter...");
+					MeshoptDecoder.decodeFilterOct(decompressedBuffer, count, stride);
+					break;
+				case QUATERNION:
+					com.badlogic.gdx.Gdx.app.log("GLTF", "Applying native Meshopt QUATERNION decode filter...");
+					MeshoptDecoder.decodeFilterQuat(decompressedBuffer, count, stride);
+					break;
+				case EXPONENTIAL:
+					com.badlogic.gdx.Gdx.app.log("GLTF", "Applying native Meshopt EXPONENTIAL decode filter...");
+					MeshoptDecoder.decodeFilterExp(decompressedBuffer, count, stride);
+					break;
+				case COLOR:
+					com.badlogic.gdx.Gdx.app.log("GLTF", "Applying native Meshopt COLOR decode filter...");
+					MeshoptDecoder.decodeFilterColor(decompressedBuffer, count, stride);
+					break;
+				default:
+					break;
+			}
+		}
+
+		// 8. Store the result in the cache to avoid re-decoding this view for other accessors
+		decompressedBuffer.clear(); // Reset positions back to 0 before saving
+		meshoptDecompressionCache.put(bufferView, decompressedBuffer);
+
+		com.badlogic.gdx.Gdx.app.log("GLTF", "DEBUG decompressMeshoptBuffer: SUCCESS");
+		return AccessorBuffer.fromByteBufferAt(glAccessor, decompressedBuffer.duplicate(), stride, glAccessor.byteOffset);
+	}
+	
+	/**
+	 * Apply meshopt filter to decompressed data.
+	 */
+	private void applyFilter(ByteBuffer buffer, MeshoptBufferViewExtension meshopt) {
+		MeshoptBufferViewExtension.Filter filter = meshopt.getFilter();
+		if (filter == MeshoptBufferViewExtension.Filter.NONE) {
+			return;
+		}
+		
+		// Reset position to apply filter
+		buffer.rewind();
+		
+		switch (filter) {
+			case OCTAHEDRAL:
+				MeshoptDecoder.decodeFilterOct(buffer, meshopt.count, meshopt.byteStride);
+				break;
+			case QUATERNION:
+				MeshoptDecoder.decodeFilterQuat(buffer, meshopt.count, meshopt.byteStride);
+				break;
+			case EXPONENTIAL:
+				MeshoptDecoder.decodeFilterExp(buffer, meshopt.count, meshopt.byteStride);
+				break;
+			case COLOR:
+				MeshoptDecoder.decodeFilterColor(buffer, meshopt.count, meshopt.byteStride);
+				break;
+			default:
+				break;
+		}
+		
+		// Reset position after filter
+		buffer.rewind();
 	}
 
 	private void patchSparseValues(GLTFAccessor glAccessor, AccessorBuffer outputBuffer) {

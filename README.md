@@ -1,3 +1,209 @@
+# gdx-gltf Extended Fork
+
+This fork extends the original [gdx-gltf](https://github.com/mgsx-dev/gdx-gltf) library with support for modern glTF compression extensions required for production mobile games with large asset counts.
+
+## Why This Fork?
+
+The original gdx-gltf does not support the following Khronos/vendor extensions, which are essential for reducing GLB file sizes by 5-10x:
+
+| Extension | Purpose | Status in Original | Status in Fork |
+|-----------|---------|-------------------|----------------|
+| `EXT_meshopt_compression` | Mesh vertex/index compression (meshoptimizer) | ❌ Not supported | ✅ Full support with native JNI decoder |
+| `KHR_mesh_quantization` | Vertex attribute quantization (USHORT/BYTE) | ❌ Not supported | ✅ Full dequantization support |
+| `KHR_texture_basisu` | Basis Universal texture compression | ❌ Not supported | ✅ Full support with native JNI transcoder |
+| `EXT_texture_webp` | WebP texture compression | ❌ Not supported | ✅ Native Android/WebP decoding |
+
+> **Note**: This implementation prioritizes functionality over perfection. While it may not follow all glTF conventions or handle every edge case, it provides working support for compressed assets where the original library had none. Use it as a starting point and contribute improvements if needed.
+
+## Key Features
+
+- **Meshopt Decompression**: Native JNI integration with meshoptimizer library for decompressing mesh vertices, indices, and filtered normals (OCTAHEDRAL filter)
+- **Quantized Vertex Dequantization**: Proper handling of gltfpack node-quantization mapping (node scale/translation baked into dequantization)
+- **Basis Universal Transcoding**: Native JNI integration with Basis transcoder for real-time texture decompression to GPU formats
+- **WebP Texture Support**: Direct WebP decoding from embedded GLB buffers on Android
+
+## Limitations
+
+### Quantized Attributes are Dequantized to Float
+
+All quantized vertex attributes (positions, normals, texcoords) are **dequantized to full-precision float arrays** at load time. This means:
+
+- The GPU receives uncompressed `float` vertex buffers, not the original `USHORT`/`BYTE` quantized data
+- Memory usage on the GPU is higher than a fully optimized implementation that would use vertex attribute quantization directly in shaders
+- This trade-off was made because implementing proper quantized vertex attributes in libGDX shaders would require extensive shader modifications and custom attribute handling
+
+The file-size savings from compression are still achieved (5-10x smaller GLB files), but runtime GPU memory is not reduced compared to loading uncompressed assets.
+
+### Other Known Limitations
+
+- The implementation focuses on the gltfpack compression pipeline; other meshopt encoders may produce slightly different results
+- Multi-primitive meshes with shared quantization transforms require all primitives to use the same node transform for dequantization
+- Desktop native library support is experimental; Android is the primary target platform
+
+### Texture Compression Advantage
+
+Unlike mesh attributes, **Basis Universal textures (`-tc` in gltfpack) are transcoded directly to GPU-native compressed formats** (ETC2 on most Android devices, ASTC where available). This means:
+
+- Textures remain compressed on the GPU, using significantly less GPU memory than uncompressed RGBA8888
+- The Basis transcoder converts KTX2 containers to the optimal GPU format at load time via native JNI
+- This is a true memory win compared to loading uncompressed PNG/JPEG textures
+
+## Prerequisites
+
+- libGDX 1.14.0+
+- Android NDK r25+ (for building native libraries)
+- CMake 3.18.1+
+
+## Installation
+
+### Option 1: Include as Git Submodule (Recommended)
+
+```bash
+# Add as submodule to your project
+git submodule add <fork-url> gdx-gltf
+```
+
+In your root `settings.gradle`:
+```gradle
+include ":gdx-gltf:gltf"
+project(":gdx-gltf:gltf").projectDir = file("gdx-gltf/gltf")
+```
+
+In your `core/build.gradle`:
+```gradle
+dependencies {
+    implementation project(":gdx-gltf:gltf")
+}
+```
+
+### Option 2: Composite Build
+
+In your root `settings.gradle`:
+```gradle
+includeBuild("gdx-gltf") {
+    dependencySubstitution {
+        substitute module("com.github.mgsx-dev.gdx-gltf:gltf") using project(":gltf")
+    }
+}
+```
+
+## Native Libraries Setup
+
+This fork requires a single native library (`libgdx-gltf-native`) that bundles both meshopt and Basis transcoder functionality.
+
+### Building Native Libraries
+
+The native code is located in `gltf/jni/` and is built via CMake:
+
+```bash
+cd gdx-gltf/gltf/jni
+
+# For Android (arm64-v8a)
+cmake -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK/build/cmake/android.toolchain.cmake \
+      -DANDROID_ABI=arm64-v8a \
+      -DANDROID_PLATFORM=android-21 \
+      -DCMAKE_BUILD_TYPE=Release \
+      -B build/arm64-v8a
+
+cmake --build build/arm64-v8a --config Release
+
+# Repeat for other ABIs: armeabi-v7a, x86, x86_64
+```
+
+The resulting library is named `libgdx-gltf-native.so` (Android), `libgdx-gltf-native.dylib` (macOS), or `gdx-gltf-native.dll` (Windows).
+
+### Including Native Libraries in Your Android Project
+
+Place the built native libraries in your Android module's `jniLibs` directory:
+
+```
+your-android-module/
+  src/main/
+    jniLibs/
+      arm64-v8a/
+        libgdx-gltf-native.so
+      armeabi-v7a/
+        libgdx-gltf-native.so
+      x86/
+        libgdx-gltf-native.so
+      x86_64/
+        libgdx-gltf-native.so
+```
+
+Or configure Gradle to point to them:
+
+```gradle
+android {
+    sourceSets {
+        main {
+            jniLibs.srcDirs = ['path/to/jniLibs']
+        }
+    }
+}
+```
+
+### Desktop Native Libraries
+
+For desktop (LWJGL), place the native library in your classpath or set `java.library.path`:
+
+```bash
+java -Djava.library.path=./path/to/native/libs -jar your-app.jar
+```
+
+### How the Native Library is Loaded
+
+The Java side loads the library automatically via `System.loadLibrary("gdx-gltf-native")` in two places:
+- `net.mgsx.gltf.meshopt.MeshoptDecoder`
+- `net.mgsx.gltf.basis.BasisTranscoder`
+
+Both classes gracefully handle the case where the native library is unavailable (features will be disabled).
+
+## JNI Library Structure
+
+The native library (`gdx-gltf-native`) bundles two libraries into a single shared object:
+
+### meshopt (Meshoptimizer)
+- **Location**: `gltf/jni/meshopt/`
+- **Sources**: `meshopt/src/*.cpp`
+- **JNI Wrapper**: `gltf/jni/meshopt_jni.cpp`
+- **Purpose**: Decompresses mesh vertex buffers, index buffers, and applies decode filters (OCTAHEDRAL for normals)
+- **Java API**: `net.mgsx.gltf.meshopt.MeshoptDecoder`
+
+### basis (Basis Universal Transcoder)
+- **Location**: `gltf/jni/basis/`
+- **Sources**: `basis/basisu_transcoder.cpp` + `basis/common/*.c` + `basis/decompress/*.c`
+- **JNI Wrapper**: `gltf/jni/basis_transcoder.cpp`
+- **Purpose**: Transcodes Basis Universal compressed textures (KTX2 container) to GPU formats (ETC2, ASTC)
+- **Java API**: `net.mgsx.gltf.basis.BasisTranscoder`
+
+### Build Configuration
+
+The `CMakeLists.txt` at `gltf/jni/CMakeLists.txt` configures:
+- C++17 standard
+- `BASISD_SUPPORT_KTX2=1` and `BASISD_SUPPORT_KTX2_ZSTD=1` compile definitions for KTX2+Zstd support
+- Links against `log` and `android` system libraries (Android-only)
+
+### Compressing Assets with gltfpack
+
+```bash
+# Example(high compression): meshopt + Basis textures + quantization + vertex/texcoord/normal quality tuning
+gltfpack -i input.glb -o output.glb -cc -tc -tq 1 -si 0.0 -vp 10 -vt 9 -vn 5
+```
+
+Options breakdown:
+| Flag | Meaning |
+|------|---------|
+| `-cc` | Enable meshopt compression for vertices and indices |
+| `-tc` | Compress textures with Basis Universal (KTX2) |
+| `-tq 1` | Texture quality (1 = lowest) |
+| `-si 0.0` | Disable texture size increase (keep original size) |
+| `-vp 10` | Position quantization quality (10 = bits per component) |
+| `-vt 9` | Texcoord quantization quality (9 = bits per component) |
+| `-vn 5` | Normal quantization quality (5 = bits per component) |
+
+---
+
+# Original gdx-gltf Documentation
 
 [![status](https://img.shields.io/badge/glTF-2%2E0-green.svg?style=flat)](https://github.com/KhronosGroup/glTF) [![GitHub release (latest SemVer including pre-releases)](https://img.shields.io/badge/semver-2.0-brightgreen)](https://semver.org/) [![Release](https://jitpack.io/v/mgsx-dev/gdx-gltf.svg)](https://jitpack.io/#mgsx-dev/gdx-gltf) [![GitHub release (latest SemVer including pre-releases)](https://img.shields.io/github/v/release/mgsx-dev/gdx-gltf?include_prereleases&sort=semver)](https://github.com/mgsx-dev/gdx-gltf/releases)
 
@@ -68,6 +274,10 @@ GLTF extensions implemented:
 * [KHR_materials_specular](https://github.com/KhronosGroup/glTF/blob/main/extensions/2.0/Khronos/KHR_materials_specular)
 * [KHR_materials_iridescence](https://github.com/KhronosGroup/glTF/blob/main/extensions/2.0/Khronos/KHR_materials_iridescence)
 * [KHRMaterialsEmissiveStrength](https://github.com/KhronosGroup/glTF/blob/main/extensions/2.0/Khronos/KHR_materials_emissive_strength)
+* **EXT_meshopt_compression** (Fork addition)
+* **KHR_mesh_quantization** (Fork addition)
+* **KHR_texture_basisu** (Fork addition)
+* **EXT_texture_webp** (Fork addition)
 
 # Getting started
 

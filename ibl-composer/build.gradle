@@ -17,7 +17,10 @@ dependencies {
     
 }
 
-sourceCompatibility = 1.8
+java {
+    sourceCompatibility = JavaVersion.VERSION_1_8
+    targetCompatibility = JavaVersion.VERSION_1_8
+}
 sourceSets.main.java.srcDirs = [ "src/" ]
 sourceSets.main.resources.srcDirs = ["src"]
 sourceSets.test.java.srcDirs = [ "test/" ]
@@ -53,9 +56,8 @@ task distIBL(dependsOn: [jar]) {
 }
 
 task sourcesJar(type: Jar) {
-    duplicatesStrategy = 'exclude'
-    classifier = 'sources'
     from sourceSets.main.allSource
+    archiveClassifier = 'sources'
 }
 
 javadoc {

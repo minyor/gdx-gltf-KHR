@@ -20,6 +20,7 @@ import com.badlogic.gdx.utils.ObjectSet;
 
 import net.mgsx.gltf.data.GLTF;
 import net.mgsx.gltf.data.camera.GLTFCamera;
+import net.mgsx.gltf.data.data.MeshoptBufferViewExtension;
 import net.mgsx.gltf.data.extensions.KHRLightsPunctual;
 import net.mgsx.gltf.data.extensions.KHRLightsPunctual.GLTFLight;
 import net.mgsx.gltf.data.extensions.KHRMaterialsEmissiveStrength;
@@ -64,7 +65,11 @@ public class GLTFLoaderBase implements Disposable {
 			KHRMaterialsIOR.EXT,
 			KHRMaterialsSpecular.EXT,
 			KHRMaterialsIridescence.EXT,
-			KHRMaterialsEmissiveStrength.EXT
+			KHRMaterialsEmissiveStrength.EXT,
+			MeshoptBufferViewExtension.EXTENSION_NAME,  // EXT_meshopt_compression
+			"KHR_mesh_quantization",  // Required by gltfpack -cc (vertex quantization)
+			"KHR_texture_basisu",  // Basis Universal texture compression
+			"EXT_texture_webp"  // WebP texture compression (libGDX supports WebP natively)
 		);
 	}
 	
@@ -238,7 +243,29 @@ public class GLTFLoaderBase implements Disposable {
 		// add root nodes
 		if(gltfScene.nodes != null){
 			for(int id : gltfScene.nodes){
-				sceneModel.model.nodes.add(getNode(id));
+				Node rootNode = getNode(id);
+				// If this node has no parts but has meshopt-split children, promote them to top-level
+				if(rootNode.parts.size == 0){
+					boolean hasMeshoptSplit = false;
+					for(Node child : rootNode.getChildren()){
+						if(child instanceof NodePlus && ((NodePlus)child).meshoptSplit){
+							hasMeshoptSplit = true;
+							break;
+						}
+					}
+					if(hasMeshoptSplit){
+						Gdx.app.log("GLTF", "Promoting meshopt-split children to top-level for node '" + rootNode.id + "'");
+						for(Node child : rootNode.getChildren()){
+							if(child instanceof NodePlus && ((NodePlus)child).meshoptSplit){
+								sceneModel.model.nodes.add(child);
+							}
+						}
+					}else{
+						sceneModel.model.nodes.add(rootNode);
+					}
+				}else{
+					sceneModel.model.nodes.add(rootNode);
+				}
 			}
 		}
 		// add scene cameras (filter from all scenes cameras)
@@ -318,7 +345,7 @@ public class GLTFLoaderBase implements Disposable {
 			}
 			
 			if(glNode.mesh != null){
-				meshLoader.load(node, glModel.meshes.get(glNode.mesh), dataResolver, materialLoader);
+				meshLoader.load(node, glModel.meshes.get(glNode.mesh), dataResolver, materialLoader, glModel);
 			}
 			
 			if(glNode.camera != null){

@@ -13,4 +13,13 @@ public interface DataFileResolver {
 	public GLTF getRoot();
 	public ByteBuffer getBuffer(int buffer);
 	public Pixmap load(GLTFImage glImage);
+	
+	/**
+	 * Get raw bytes for an image (used for Basis textures).
+	 * @param glImage The image
+	 * @return Raw bytes, or null if not available
+	 */
+	public default byte[] getRawBytes(GLTFImage glImage) {
+		return null;
+	}
 }

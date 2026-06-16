@@ -8,28 +8,22 @@ dependencies {
     testImplementation "junit:junit:$junitVersion"
 }
 
-sourceCompatibility = 1.7
+java {
+    sourceCompatibility = JavaVersion.VERSION_1_8
+    targetCompatibility = JavaVersion.VERSION_1_8
+    withSourcesJar()
+    withJavadocJar()
+}
 sourceSets.main.java.srcDirs = [ "src" ]
 sourceSets.main.resources.srcDirs = ["src"]
 sourceSets.test.java.srcDirs = [ "test" ]
 sourceSets.test.resources.srcDirs = ["testRes"]
-
-task sourcesJar(type: Jar) {
-    duplicatesStrategy = 'exclude'
-    classifier = 'sources'
-    from sourceSets.main.allSource
-}
 
 javadoc {
     failOnError = false
 }
 
 [compileJava, compileTestJava]*.options*.encoding = 'UTF-8'
-
-java {
-	withSourcesJar()
-	withJavadocJar()
-}
 
 publishing {
 	publications {
