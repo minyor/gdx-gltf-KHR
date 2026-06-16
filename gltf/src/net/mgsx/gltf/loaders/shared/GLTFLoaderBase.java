@@ -119,9 +119,21 @@ public class GLTFLoaderBase implements Disposable {
 		try{
 			this.dataFileResolver = dataFileResolver;
 			
-			// Clear caches from previous loads to prevent node/mesh reuse across models
+			// Clear ALL caches from previous loads to prevent data reuse across models
 			nodeResolver = new NodeResolver();
 			meshLoader = new MeshLoader();
+			scenes.clear();
+			cameraMap.clear();
+			cameraMap.clear();
+			cameras.clear();
+			lights.clear();
+			lightMap.clear();
+			textureResolver = null;  // Force re-creating texture resolver per model
+			imageResolver = null;
+			materialSet.clear();
+			meshPartSet.clear();
+			meshSet.clear();
+			loadedMeshes.clear();
 			
 			glModel = dataFileResolver.getRoot();
 			
