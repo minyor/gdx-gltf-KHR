@@ -119,6 +119,10 @@ public class GLTFLoaderBase implements Disposable {
 		try{
 			this.dataFileResolver = dataFileResolver;
 			
+			// Clear caches from previous loads to prevent node/mesh reuse across models
+			nodeResolver = new NodeResolver();
+			meshLoader = new MeshLoader();
+			
 			glModel = dataFileResolver.getRoot();
 			
 			// prerequists (mandatory)
@@ -220,8 +224,10 @@ public class GLTFLoaderBase implements Disposable {
 	}
 
 	private void loadScenes() {
+		Gdx.app.log("GLTF", "DEBUG loadScenes: scenes.size=" + glModel.scenes.size + " glModel.scene=" + glModel.scene);
 		for(int i=0 ; i<glModel.scenes.size ; i++)
 		{
+			Gdx.app.log("GLTF", "DEBUG loadScenes: loading scene " + i + " name=" + glModel.scenes.get(i).name + " nodes=" + (glModel.scenes.get(i).nodes != null ? glModel.scenes.get(i).nodes.size : "null"));
 			scenes.add(loadScene(glModel.scenes.get(i)));
 		}
 	}
@@ -241,8 +247,10 @@ public class GLTFLoaderBase implements Disposable {
 		sceneModel.model = new Model();
 		
 		// add root nodes
+		Gdx.app.log("GLTF", "DEBUG loadScene: scene=" + gltfScene.name + " nodes=" + (gltfScene.nodes != null ? gltfScene.nodes.size : "null"));
 		if(gltfScene.nodes != null){
 			for(int id : gltfScene.nodes){
+				Gdx.app.log("GLTF", "DEBUG loadScene: processing root node id=" + id);
 				Node rootNode = getNode(id);
 				// If this node has no parts but has meshopt-split children, promote them to top-level
 				if(rootNode.parts.size == 0){
@@ -310,14 +318,17 @@ public class GLTFLoaderBase implements Disposable {
 		for(T e : src) dst.add(e);
 	}
 
-	private Node getNode(int id) 
+	private Node getNode(int id)
 	{
+		Gdx.app.log("GLTF", "DEBUG getNode: ENTER id=" + id + " glModel.nodes.size=" + glModel.nodes.size);
 		Node node = nodeResolver.get(id);
+		Gdx.app.log("GLTF", "DEBUG getNode: cached=" + (node != null));
 		if(node == null){
 			node = new NodePlus();
 			nodeResolver.put(id, node);
 			
 			GLTFNode glNode = glModel.nodes.get(id);
+			Gdx.app.log("GLTF", "DEBUG getNode: glNode.mesh=" + glNode.mesh + " meshes.size=" + glModel.meshes.size);
 			
 			if(glNode.matrix != null){
 				Matrix4 matrix = new Matrix4(glNode.matrix);
@@ -345,6 +356,7 @@ public class GLTFLoaderBase implements Disposable {
 			}
 			
 			if(glNode.mesh != null){
+				Gdx.app.log("GLTF", "DEBUG getNode: calling meshLoader.load for mesh index " + glNode.mesh);
 				meshLoader.load(node, glModel.meshes.get(glNode.mesh), dataResolver, materialLoader, glModel);
 			}
 			
