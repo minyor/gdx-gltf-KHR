@@ -36,6 +36,10 @@ public class DataResolver {
 		AccessorBuffer accessorBuffer = getAccessorBuffer(accessor);
 		ByteBuffer bytes = accessorBuffer.prepareForReading();
 		
+		// MANDATORY FOR GLTF: Force byte buffer to match glTF specification specification (Little Endian)
+		// This guarantees that 1.0f (3F 80 00 00) reads as 1.0f on both Android and PlayStation!
+		bytes.order(java.nio.ByteOrder.LITTLE_ENDIAN);
+		
 		int nbFloatsPerVertex = GLTFTypes.accessorTypeSize(accessor);
 		int totalElements = accessor.count * nbFloatsPerVertex;
 		float[] data = new float[totalElements];
@@ -44,6 +48,8 @@ public class DataResolver {
 		if(nbBytesToSkip == 0){
 			int currentPos = bytes.position();
 			ByteBuffer safeSlice = bytes.duplicate();
+			// Ensure the duplicated slice inherits the forced Little-Endian byte orientation
+			safeSlice.order(java.nio.ByteOrder.LITTLE_ENDIAN);
 			safeSlice.position(currentPos);
 			safeSlice.limit(currentPos + (totalElements * 4));
 			safeSlice.asFloatBuffer().get(data);
@@ -64,14 +70,17 @@ public class DataResolver {
 		AccessorBuffer accessorBuffer = getAccessorBuffer(accessor);
 		ByteBuffer bytes = accessorBuffer.prepareForReading();
 		
+		// (Single bytes are endian-independent, but keeping it uniform protects sub-slices)
+		bytes.order(java.nio.ByteOrder.LITTLE_ENDIAN);
+		
 		int nbBytesPerVertex = GLTFTypes.accessorTypeSize(accessor);
-		// CRITICAL: Allocate STRICTLY for the accessor's local count
 		int[] data = new int[accessor.count * nbBytesPerVertex];
 		
 		int nbBytesToSkip = accessorBuffer.getByteStride() - nbBytesPerVertex;
 		if(nbBytesToSkip == 0){
 			int currentPos = bytes.position();
 			ByteBuffer safeSlice = bytes.duplicate();
+			safeSlice.order(java.nio.ByteOrder.LITTLE_ENDIAN);
 			safeSlice.position(currentPos);
 			safeSlice.limit(currentPos + data.length);
 			
@@ -93,20 +102,23 @@ public class DataResolver {
 	public int[] readBufferUShort(int accessorID) {
 		GLTFAccessor accessor = glModel.accessors.get(accessorID);
 		AccessorBuffer accessorBuffer = getAccessorBuffer(accessor);
-		ByteBuffer bytes = accessorBuffer.prepareForReading(); // Sets position to byteOffset
+		ByteBuffer bytes = accessorBuffer.prepareForReading(); 
+		
+		// MANDATORY FOR GLTF: Force 16-bit short integers to evaluate using Little-Endian order!
+		bytes.order(java.nio.ByteOrder.LITTLE_ENDIAN);
 		
 		int nbShortsPerVertex = GLTFTypes.accessorTypeSize(accessor);
-		// CRITICAL: Allocate STRICTLY for the accessor's local count, matching uncompressed expectations
 		int[] data = new int[accessor.count * nbShortsPerVertex];
 		
 		int nbBytesToSkip = accessorBuffer.getByteStride() - nbShortsPerVertex * 2;
 		if(nbBytesToSkip == 0){
 			int currentPos = bytes.position();
 			ByteBuffer safeSlice = bytes.duplicate();
+			safeSlice.order(java.nio.ByteOrder.LITTLE_ENDIAN);
 			safeSlice.position(currentPos);
-			safeSlice.limit(currentPos + (data.length * 2)); // Dynamic boundary restriction
+			safeSlice.limit(currentPos + (data.length * 2)); 
 			
-			ShortBuffer shorts = safeSlice.asShortBuffer();
+			java.nio.ShortBuffer shorts = safeSlice.asShortBuffer();
 			for(int i=0 ; i<data.length ; i++){
 				data[i] = shorts.get() & 0xFFFF;
 			}
@@ -166,26 +178,19 @@ public class DataResolver {
 	}
 
 	public AccessorBuffer getAccessorBuffer(GLTFAccessor glAccessor) {
-		com.badlogic.gdx.Gdx.app.log("GLTF", "DEBUG getAccessorBuffer: accessor.count=" + glAccessor.count + " accessor.bufferView=" + glAccessor.bufferView + " accessor.byteOffset=" + glAccessor.byteOffset);
 		AccessorBuffer buffer;
 		if (glAccessor.bufferView != null) {
 			GLTFBufferView bufferView = glModel.bufferViews.get(glAccessor.bufferView);
-			com.badlogic.gdx.Gdx.app.log("GLTF", "DEBUG getAccessorBuffer: bufferView=" + (bufferView != null ? "found" : "NULL") + " bufferView.buffer=" + (bufferView != null ? bufferView.buffer : "N/A"));
 			
 			// Check for meshopt compression extension
 			MeshoptBufferViewExtension meshopt = getMeshoptExtension(bufferView);
-			com.badlogic.gdx.Gdx.app.log("GLTF", "DEBUG getAccessorBuffer: meshopt extension=" + (meshopt != null ? "FOUND" : "null"));
 			if (meshopt != null) {
-				com.badlogic.gdx.Gdx.app.log("GLTF", "DEBUG getAccessorBuffer: meshopt.buffer=" + meshopt.buffer + " mode=" + meshopt.mode + " filter=" + meshopt.filter + " count=" + meshopt.count + " byteStride=" + meshopt.byteStride);
-				com.badlogic.gdx.Gdx.app.log("GLTF", "DEBUG getAccessorBuffer: MeshoptDecoder.isAvailable()=" + MeshoptDecoder.isAvailable());
 				// Decompress using meshopt decoder
 				buffer = decompressMeshoptBuffer(glAccessor, bufferView, meshopt);
 			} else {
-				com.badlogic.gdx.Gdx.app.log("GLTF", "DEBUG getAccessorBuffer: using regular AccessorBuffer.fromBufferView");
 				buffer = AccessorBuffer.fromBufferView(glAccessor, bufferView, dataFileResolver);
 			}
 		} else {
-			com.badlogic.gdx.Gdx.app.log("GLTF", "DEBUG getAccessorBuffer: bufferView is null, using fromZeros");
 			buffer = AccessorBuffer.fromZeros(glAccessor);
 		}
 		if (glAccessor.sparse != null) {
