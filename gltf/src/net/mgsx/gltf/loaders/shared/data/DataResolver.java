@@ -44,24 +44,75 @@ public class DataResolver {
 		int totalElements = accessor.count * nbFloatsPerVertex;
 		float[] data = new float[totalElements];
 
-		int nbBytesToSkip = accessorBuffer.getByteStride() - nbFloatsPerVertex * 4;
-		if(nbBytesToSkip == 0){
-			int currentPos = bytes.position();
-			ByteBuffer safeSlice = bytes.duplicate();
-			// Ensure the duplicated slice inherits the forced Little-Endian byte orientation
-			safeSlice.order(java.nio.ByteOrder.LITTLE_ENDIAN);
-			safeSlice.position(currentPos);
-			safeSlice.limit(currentPos + (totalElements * 4));
-			safeSlice.asFloatBuffer().get(data);
-			bytes.position(currentPos + (totalElements * 4));
-		}else{
+		// Check what primitive data type gltfpack actually wrote for this accessor channel
+		if (accessor.componentType == 5126) { // GL_FLOAT (Standard, 4 Bytes)
+			int nbBytesToSkip = accessorBuffer.getByteStride() - nbFloatsPerVertex * 4;
+			if(nbBytesToSkip == 0){
+				int currentPos = bytes.position();
+				ByteBuffer safeSlice = bytes.duplicate();
+				// Ensure the duplicated slice inherits the forced Little-Endian byte orientation
+				safeSlice.order(java.nio.ByteOrder.LITTLE_ENDIAN);
+				safeSlice.position(currentPos);
+				safeSlice.limit(currentPos + (totalElements * 4));
+				safeSlice.asFloatBuffer().get(data);
+				bytes.position(currentPos + (totalElements * 4));
+			}else{
+				for(int i=0 ; i<accessor.count ; i++){
+					for(int j=0 ; j<nbFloatsPerVertex ; j++){
+						data[i*nbFloatsPerVertex+j] = bytes.getFloat();
+					}
+					bytes.position(bytes.position() + nbBytesToSkip);
+				}
+			}
+		} 
+		else if (accessor.componentType == 5122) { // GL_SHORT (Compressed Signed Short, 2 Bytes)
+			int nbBytesToSkip = accessorBuffer.getByteStride() - nbFloatsPerVertex * 2;
+			boolean isQuaternion = (nbFloatsPerVertex == 4);
+			
+			// Dynamically read glTF bounds to scale translations/scales without hardcoding factors!
+			float[] minBounds = (accessor.min != null && accessor.min.length >= nbFloatsPerVertex) ? accessor.min : null;
+			float[] maxBounds = (accessor.max != null && accessor.max.length >= nbFloatsPerVertex) ? accessor.max : null;
+
 			for(int i=0 ; i<accessor.count ; i++){
 				for(int j=0 ; j<nbFloatsPerVertex ; j++){
-					data[i*nbFloatsPerVertex+j] = bytes.getFloat();
+					short rawShort = bytes.getShort();
+					if (isQuaternion) {
+						// Rotations decode strictly between -1.0 and 1.0 per glTF spec
+						data[i*nbFloatsPerVertex+j] = (float) rawShort / 32767.0f;
+					} else if (minBounds != null && maxBounds != null) {
+						// Standard glTF dequantization fallback using accessor limits
+						float normalizedFraction = ((float) rawShort + 32128.0f) / 65535.0f;
+						data[i*nbFloatsPerVertex+j] = minBounds[j] + (normalizedFraction * (maxBounds[j] - minBounds[j]));
+					} else {
+						// Fallback if bounds are missing
+						data[i*nbFloatsPerVertex+j] = (float) rawShort;
+					}
 				}
 				bytes.position(bytes.position() + nbBytesToSkip);
 			}
+		} 
+		else if (accessor.componentType == 5123) { // GL_UNSIGNED_SHORT (Compressed Unsigned Short, 2 Bytes)
+			int nbBytesToSkip = accessorBuffer.getByteStride() - nbFloatsPerVertex * 2;
+			for(int i=0 ; i<accessor.count ; i++){
+				for(int j=0 ; j<nbFloatsPerVertex ; j++){
+					data[i*nbFloatsPerVertex+j] = (float) (bytes.getShort() & 0xFFFF);
+				}
+				bytes.position(bytes.position() + nbBytesToSkip);
+			}
+		} 
+		else if (accessor.componentType == 5121) { // GL_UNSIGNED_BYTE (Compressed Unsigned Byte, 1 Byte)
+			int nbBytesToSkip = accessorBuffer.getByteStride() - nbFloatsPerVertex;
+			for(int i=0 ; i<accessor.count ; i++){
+				for(int j=0 ; j<nbFloatsPerVertex ; j++){
+					data[i*nbFloatsPerVertex+j] = (float) (bytes.get() & 0xFF);
+				}
+				bytes.position(bytes.position() + nbBytesToSkip);
+			}
+		} 
+		else {
+			throw new com.badlogic.gdx.utils.GdxRuntimeException("Unsupported component type inside readBufferFloat: " + accessor.componentType);
 		}
+		
 		return data;
 	}
 	
