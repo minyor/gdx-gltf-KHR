@@ -392,20 +392,45 @@ public class MeshLoader {
 						
 						if (isPosition) {
 							// POSITION: gltfpack node-quantization mapping
-							com.badlogic.gdx.math.Vector3 nodeTranslation = node.translation;
-							com.badlogic.gdx.math.Vector3 nodeScale = node.scale;
+							// Direct check: If bones are active or if the primitive lists bone indices, it's skinned!
+							boolean nodeHasBones = (bonesIndices != null && bonesIndices.size > 0);
 							
-							for(int j = 0; j < glAccessor.count; j++){
-								int vIndex = j * vertexFloats + attribute.offset / 4;
-								int dIndex = baseOffset + j * strideBytes;
-								for(int k = 0; k < numComponents; k++){
-									int quantized = data.getShort(dIndex + k * 2) & 0xFFFF;
-									float scale = (k == 0) ? nodeScale.x : (k == 1) ? nodeScale.y : nodeScale.z;
-									float offset = (k == 0) ? nodeTranslation.x : (k == 1) ? nodeTranslation.y : nodeTranslation.z;
-									vertices[vIndex + k] = (quantized * scale) + offset;
+							if (nodeHasBones) {
+								// --- ANIMATED MODELS BRANCH ---
+								for(int j = 0; j < glAccessor.count; j++){
+									int vIndex = j * vertexFloats + attribute.offset / 4;
+									int dIndex = baseOffset + j * strideBytes;
+									for(int k = 0; k < numComponents; k++){
+										int quantized = data.getShort(dIndex + k * 2) & 0xFFFF;
+										vertices[vIndex + k] = (float) quantized;
+									}
 								}
+								Gdx.app.log("GLTF_KHR", "Skinned model position array loaded into raw scalar space.");
+							} else {
+								// --- STATIC MODELS BRANCH ---
+								// Revert to your original, pristine load-time baking logic.
+								float staticScaleX = node.scale.x;
+								float staticScaleY = node.scale.y;
+								float staticScaleZ = node.scale.z;
+								
+								float staticTransX = node.translation.x;
+								float staticTransY = node.translation.y;
+								float staticTransZ = node.translation.z;
+
+								for(int j = 0; j < glAccessor.count; j++){
+									int vIndex = j * vertexFloats + attribute.offset / 4;
+									int dIndex = baseOffset + j * strideBytes;
+									for(int k = 0; k < numComponents; k++){
+										int quantized = data.getShort(dIndex + k * 2) & 0xFFFF;
+										
+										float scale = (k == 0) ? staticScaleX : (k == 1) ? staticScaleY : staticScaleZ;
+										float offset = (k == 0) ? staticTransX : (k == 1) ? staticTransY : staticTransZ;
+										
+										vertices[vIndex + k] = (quantized * scale) + offset;
+									}
+								}
+								Gdx.app.log("GLTF_KHR", "Static model position array baked at load-time successfully.");
 							}
-							
 						} else {
 							float currentDenominator = 65535.0f;
 							float scaleU = 1.0f;
