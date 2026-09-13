@@ -34,24 +34,28 @@ public class SceneAsset implements Disposable
 	
 	@Override
 	public void dispose() {
+		// Null-guard every tracked element: a partially-decoded asset (e.g. a compressed/basis texture
+		// whose transcode failed) can leave null entries in these arrays, which previously crashed dispose()
+		// with a NullPointerException the first time a screen was torn down. Skipping nulls makes dispose()
+		// safe on any asset regardless of decode success. Generic - no per-asset or format special-casing.
 		if(scenes != null){
 			for(SceneModel scene : scenes){
-				scene.dispose();
+				if(scene != null) scene.dispose();
 			}
 		}
 		if(textures != null){
 			for(Texture texture : textures){
-				texture.dispose();
+				if(texture != null) texture.dispose();
 			}
 		}
 		if(pixmaps != null){
 			for(Pixmap pixmap : pixmaps){
-				pixmap.dispose();
+				if(pixmap != null) pixmap.dispose();
 			}
 		}
 		if(meshes != null){
 			for(Mesh mesh : meshes){
-				mesh.dispose();
+				if(mesh != null) mesh.dispose();
 			}
 		}
 	}
