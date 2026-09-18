@@ -6,7 +6,17 @@
 #include <algorithm> // Required for std::max
 
 #define LOG_TAG "BasisJNI"
+// Verbose logging gate (mirrors GameConfig.DEBUG_VERBOSE on the Kotlin side). When BASIS_VERBOSE_LOG is 0 the
+// call compiles to a dead branch: arguments are still type-checked but emit no code and print nothing. Flip to 1
+// only when diagnosing the native KTX2 transcode path. LOGE (real errors) is intentionally left ungated.
+#ifndef BASIS_VERBOSE_LOG
+#define BASIS_VERBOSE_LOG 0
+#endif
+#if BASIS_VERBOSE_LOG
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
+#else
+#define LOGI(...) do { if (0) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__); } while (0)
+#endif
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
 #define BASISD_SUPPORT_KTX2 1
